@@ -1,4 +1,4 @@
-# Projeto Livraria API: Aprendendo FastAPI, Pydantic e SQLAlchemy
+# Projeto Livraria API: Aprendendo FastAPI e SQLAlchemy
 
 Este projeto é uma API simples para gerenciamento de livros, desenvolvida como um exercício prático para aprender e demonstrar o uso de FastAPI, Pydantic e SQLAlchemy em conjunto.
 
