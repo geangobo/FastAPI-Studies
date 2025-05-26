@@ -56,6 +56,59 @@ def create_new_book(book: schemas.BookCreate, db: Session = Depends(get_db)):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Livro com ISBN {book.isbn} já existe.")
     return crud.create_book(db=db, book=book)
 
+@app.post("/books/bulk/", response_model=List[schemas.Book], status_code=status.HTTP_201_CREATED, tags=["Books"])
+def create_multiple_books(books_to_create: List[schemas.BookCreate], db: Session = Depends(get_db)):
+    """
+    Cria múltiplos livros de uma vez.
+    Envie uma lista de objetos de livros (schemas.BookCreate) no corpo da requisição.
+    """
+    created_books_list = []
+    errors_details = [] # Para coletar informações sobre erros, se houver
+
+    for book_data in books_to_create:
+        # Validação de ISBN duplicado (opcional, mas recomendado para consistência)
+        # Esta é uma verificação antes de tentar inserir no banco.
+        # A função crud.create_book também pode ter sua própria lógica de erro ou o banco pode rejeitar.
+        if book_data.isbn:
+            existing_book_by_isbn = crud.get_book_by_isbn(db, isbn=book_data.isbn)
+            if existing_book_by_isbn:
+                # Decide como lidar:
+                # 1. Levantar uma exceção e parar todo o lote (mais simples de implementar inicialmente)
+                # 2. Adicionar a um log de erros e continuar com os próximos (mais complexo)
+                # 3. Retornar uma resposta mista (alguns criados, alguns com erro)
+                # Para este exemplo, vamos ser rigorosos como no endpoint de criação única:
+                errors_details.append({"isbn": book_data.isbn, "error": "ISBN já existe"})
+                # Se quiser parar no primeiro erro de ISBN duplicado no lote:
+                # raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Livro com ISBN {book_data.isbn} já existe no banco ou no lote.")
+                continue # Pula para o próximo livro do lote se um ISBN já existe
+
+        # Se chegou aqui, o ISBN (se fornecido) não foi encontrado previamente OU não foi fornecido
+        try:
+            created_book = crud.create_book(db=db, book=book_data) # crud.create_book faz o commit
+            created_books_list.append(created_book)
+        except Exception as e: # Captura uma exceção mais genérica do crud.create_book
+                               # Por exemplo, IntegrityError do banco se o ISBN for único e já existir
+                               # e não foi pego pela verificação anterior (condição de corrida ou ISBN nulo antes e agora preenchido).
+            db.rollback() # Importante reverter se o crud.create_book falhou após um add mas antes do commit, ou se o commit falhou.
+                          # A sua função crud.create_book atual já faz o commit. Se ela falhar, o estado da sessão é importante.
+            errors_details.append({"title": book_data.title, "error": str(e)})
+            # Se a sua função crud.create_book não fizer commit e você fizer commit aqui no final,
+            # um único rollback aqui seria mais apropriado para a transação inteira.
+
+    # Se você quiser retornar um erro geral caso algum livro tenha falhado:
+    if errors_details and not created_books_list: # Nenhum livro foi criado, só erros
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": "Nenhum livro pôde ser criado devido a erros.", "errors": errors_details})
+    
+    # Se alguns foram criados e outros não, você pode querer uma resposta mais complexa
+    # ou simplesmente retornar os que foram criados com sucesso.
+    # Por simplicidade, se houver erros mas alguns livros foram criados, retornamos os criados.
+    # Uma resposta mais completa poderia incluir os detalhes dos erros.
+
+    if not created_books_list and not errors_details:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum dado de livro fornecido ou todos os dados eram inválidos antes da tentativa de criação.")
+
+    return created_books_list
+
 @app.get("/books/", response_model=List[schemas.Book], tags=["Books"])
 def read_all_books(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     """
